@@ -34,7 +34,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const dateStr = new Date().toISOString().split('T')[0];
+    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv' }).format(new Date());
     
     // Fetch stats
     const dailyVisits = parseInt(await redis.get(`stats:daily:visits:${dateStr}`)) || 0;

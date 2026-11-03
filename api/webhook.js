@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     if (!token) return res.status(500).json({ error: 'No token' });
 
     try {
-      const dateStr = new Date().toISOString().split('T')[0];
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv' }).format(new Date());
       
       const dailyVisits = parseInt(await redis.get(`stats:daily:visits:${dateStr}`)) || 0;
       const dailyNewUsers = parseInt(await redis.get(`stats:daily:new_users:${dateStr}`)) || 0;

@@ -41,16 +41,12 @@
       "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень"
     ],
     DAY_NAMES: ["нд", "пн", "вт", "ср", "чт", "пт", "сб"],
-    DEFAULT_TG_BOT_TOKEN: "", // Приховано; буде налаштовано при деплої на Vercel
-    DEFAULT_TG_CHAT_ID: "",   // Приховано; буде налаштовано при деплої на Vercel
     STORAGE_KEYS: {
       NOTES: "shift_schedule_notes_v2",
       THEME: "shift_schedule_theme",
       FEEDBACKS: "shift_schedule_feedbacks",
       USAGE_STATS: "shift_schedule_usage_stats_v1",
-      OUTBOX: "shift_schedule_outbox_v1",
-      TG_TOKEN: "telegram_bot_token",
-      TG_CHAT_ID: "telegram_chat_id"
+      OUTBOX: "shift_schedule_outbox_v1"
     },
     MOBILE_BREAKPOINT_QUERY: "(max-width: 768px)"
   };
@@ -70,6 +66,8 @@
 
   // --- 4. Storage & Utility Helpers ---
   const Utils = {
+    _toastTimer: null,
+
     // Returns human‑readable shift name based on numeric code
     getShiftName(shift) {
       switch (shift) {
@@ -83,6 +81,15 @@
           return "";
       }
     },
+
+    // Returns compact icon for table cell status badge
+    getStatusIcon(statusTag) {
+      if (!statusTag || statusTag === "normal") return "";
+      if (statusTag.includes("Лікарняний")) return "✚";
+      if (statusTag.includes("Відпустка")) return "⛱︎";
+      return "✎";
+    },
+
     safeGetItem(key, defaultValue = null) {
       try {
         const raw = localStorage.getItem(key);
@@ -124,10 +131,14 @@
     showToast(message, duration = 3500) {
       const toast = document.getElementById("toastNotification");
       if (!toast) return;
+      if (this._toastTimer) {
+        clearTimeout(this._toastTimer);
+      }
       toast.textContent = message;
       toast.classList.add("active");
-      setTimeout(() => {
+      this._toastTimer = setTimeout(() => {
         toast.classList.remove("active");
+        this._toastTimer = null;
       }, duration);
     },
 
@@ -143,6 +154,19 @@
 
   // --- 5. Storage Service ---
   const StorageService = {
+    getUsageStats() {
+      try {
+        const raw = Utils.safeGetItem(CONFIG.STORAGE_KEYS.USAGE_STATS);
+        return raw ? JSON.parse(raw) : {
+          visitCount: 1,
+          firstVisit: new Date().toISOString(),
+          lastVisit: new Date().toISOString()
+        };
+      } catch (e) {
+        return { visitCount: 1, firstVisit: new Date().toISOString(), lastVisit: new Date().toISOString() };
+      }
+    },
+
     trackUsage() {
       try {
         const raw = Utils.safeGetItem(CONFIG.STORAGE_KEYS.USAGE_STATS);
@@ -212,22 +236,12 @@
     setNote(dateStr, shiftGroup, noteData) {
       const notes = this.getStoredNotes();
       const key = Utils.makeNoteKey(dateStr, shiftGroup);
-      if (!noteData || (!noteData.text && !noteData.statusTag)) {
+      if (!noteData || (!noteData.text && (!noteData.statusTag || noteData.statusTag === "normal"))) {
         delete notes[key];
       } else {
         notes[key] = noteData;
       }
       this.saveStoredNotes(notes);
-    },
-
-    getTgCredentials() {
-      const userCustomToken = Utils.safeGetItem(CONFIG.STORAGE_KEYS.TG_TOKEN);
-      const token = (userCustomToken && userCustomToken.trim()) ? userCustomToken.trim() : CONFIG.DEFAULT_TG_BOT_TOKEN;
-
-      const userCustomChatId = Utils.safeGetItem(CONFIG.STORAGE_KEYS.TG_CHAT_ID);
-      const chatId = (userCustomChatId && userCustomChatId.trim()) ? userCustomChatId.trim() : CONFIG.DEFAULT_TG_CHAT_ID;
-
-      return { token, chatId };
     }
   };
 
@@ -242,6 +256,25 @@
       // Mathematical positive modulo handles past and future centuries correctly
       const cycleIdx = ((baseIdx + diffDays) % 15 + 15) % 15;
       return CONFIG.CYCLE_PATTERN[cycleIdx];
+    },
+
+    calculateMonthStats(shiftGroup, year, monthIdx) {
+      const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+      let workDays = 0;
+      let shift1 = 0;
+      let shift2 = 0;
+      let shift3 = 0;
+      let offDays = 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const val = this.calculateShift(shiftGroup, year, monthIdx, d);
+        if (val === 1) { shift1++; workDays++; }
+        else if (val === 2) { shift2++; workDays++; }
+        else if (val === 3) { shift3++; workDays++; }
+        else { offDays++; }
+      }
+
+      return { daysInMonth, workDays, shift1, shift2, shift3, offDays };
     }
   };
 
@@ -429,18 +462,18 @@
             if (note.statusTag && note.statusTag !== "normal") {
               const badge = document.createElement("span");
               badge.className = "custom-status-badge";
-              badge.textContent = note.statusTag;
+              badge.textContent = Utils.getStatusIcon(note.statusTag);
               td.appendChild(badge);
             }
 
-            const shiftName = Utils.getShiftName(shiftVal);
+            const shiftName = Utils.getShiftName(shiftVal) || "Вихідний";
             let tooltip = `${dateStr} [${shiftName}]: `;
-            if (note.statusTag) tooltip += `[${note.statusTag}] `;
+            if (note.statusTag && note.statusTag !== "normal") tooltip += `[${note.statusTag}] `;
             if (note.text) tooltip += note.text;
-            td.title = tooltip;
+            td.title = tooltip.trim();
           } else {
-            const shiftName = Utils.getShiftName(shiftVal);
-            td.title = `${CONFIG.MONTH_NAMES[monthIdx]} ${d}, ${year} - ${shiftName}`;
+            const shiftName = Utils.getShiftName(shiftVal) || "Вихідний";
+            td.title = `${CONFIG.MONTH_NAMES[monthIdx]} ${d}, ${year} — ${shiftName}`;
           }
 
           if (onCellClick) {
@@ -466,6 +499,50 @@
       table.appendChild(tbody);
       tableWrapper.appendChild(table);
       return tableWrapper;
+    }
+  };
+
+  // --- 9.5. Shift Filter Controller ---
+  const FilterController = {
+    setFilter(filterValue, clickedBtn = null) {
+      if (filterValue === "all" || (filterValue === State.activeFilter && filterValue !== "all")) {
+        State.activeFilter = "all";
+      } else {
+        State.activeFilter = filterValue;
+      }
+
+      if (clickedBtn && typeof clickedBtn.blur === "function") {
+        clickedBtn.blur();
+      }
+
+      this.syncUI();
+      CalendarRenderer.render();
+      if (State.isMonthModalOpen) {
+        MonthModalController.renderCurrentMonth();
+      }
+
+      const filterAccordion = document.getElementById("filterAccordion");
+      if (filterAccordion && filterAccordion.hasAttribute("open")) {
+        filterAccordion.removeAttribute("open");
+      }
+    },
+
+    syncUI() {
+      const allFilterBtns = document.querySelectorAll(".btn-filter");
+      allFilterBtns.forEach(btn => {
+        const isMatch = btn.dataset.filter === State.activeFilter;
+        btn.classList.toggle("active", isMatch);
+        btn.setAttribute("aria-pressed", isMatch ? "true" : "false");
+      });
+
+      const activeFilterBadge = document.getElementById("activeFilterBadge");
+      const filterAccordion = document.getElementById("filterAccordion");
+      if (activeFilterBadge) {
+        activeFilterBadge.textContent = State.activeFilter === "all" ? "Всі" : `Зміна ${State.activeFilter}`;
+      }
+      if (filterAccordion) {
+        filterAccordion.classList.toggle("has-active-filter", State.activeFilter !== "all");
+      }
     }
   };
 
@@ -497,11 +574,17 @@
       const monthCard = document.createElement("div");
       monthCard.className = "month-card";
 
+      let metaText = `${daysInMonth} днів`;
+      if (State.activeFilter !== "all") {
+        const stats = ShiftEngine.calculateMonthStats(State.activeFilter, year, monthIdx);
+        metaText = `${daysInMonth} дн. • Зміна ${State.activeFilter}: ${stats.workDays} роб. / ${stats.offDays} вих.`;
+      }
+
       const header = document.createElement("div");
       header.className = "month-header";
       header.innerHTML = `
         <div class="month-title">${CONFIG.MONTH_NAMES[monthIdx]} ${year}</div>
-        <div class="month-meta">${daysInMonth} днів</div>
+        <div class="month-meta">${metaText}</div>
       `;
       monthCard.appendChild(header);
 
@@ -521,17 +604,25 @@
       monthCard.setAttribute("role", "button");
       monthCard.setAttribute("aria-label", `Відкрити графік: ${CONFIG.MONTH_NAMES[monthIdx]} ${year}`);
 
-      // Count notes stored for this month
+      // Count notes stored for this month (filtered by shift if filter active)
       const monthPrefix = `${year}-${String(monthIdx + 1).padStart(2, '0')}-`;
       let noteCount = 0;
       Object.keys(notes).forEach(key => {
         if (key.startsWith(monthPrefix)) {
-          noteCount++;
+          if (State.activeFilter === "all" || key.endsWith(`_${State.activeFilter}`)) {
+            noteCount++;
+          }
         }
       });
 
       const noteBtnClass = noteCount > 0 ? "btn-month-note has-notes" : "btn-month-note";
       const noteCountText = noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ``;
+
+      let metaText = `${daysInMonth} днів`;
+      if (State.activeFilter !== "all") {
+        const stats = ShiftEngine.calculateMonthStats(State.activeFilter, year, monthIdx);
+        metaText = `Зміна ${State.activeFilter}: ${stats.workDays} роб.`;
+      }
 
       monthCard.innerHTML = `
         <div class="month-header">
@@ -539,7 +630,7 @@
             <span class="material-symbols-outlined" style="font-size: 1.2rem;">calendar_month</span>
             <span>${CONFIG.MONTH_NAMES[monthIdx]} ${year}</span>
           </div>
-          <div class="month-meta">${daysInMonth} днів</div>
+          <div class="month-meta">${metaText}</div>
         </div>
         <div class="month-card-preview">
           <div class="${noteBtnClass}">
@@ -578,8 +669,9 @@
 
     scrollToToday() {
       setTimeout(() => {
-        const todayCell = document.querySelector(".cell-today");
-        if (todayCell) {
+        const calendarContainer = document.getElementById("calendarContainer");
+        const todayCell = calendarContainer ? calendarContainer.querySelector(".cell-today") : null;
+        if (todayCell && !State.isMonthModalOpen) {
           todayCell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
         }
       }, 350);
@@ -627,6 +719,7 @@
       const monthModalTitle = document.getElementById("monthModalTitle");
       const monthModalSubtitle = document.getElementById("monthModalSubtitle");
       const monthModalTableContainer = document.getElementById("monthModalTableContainer");
+      const monthModalStatsBar = document.getElementById("monthModalStatsBar");
       const btnPrevMonthModal = document.getElementById("btnPrevMonthModal");
       const btnNextMonthModal = document.getElementById("btnNextMonthModal");
 
@@ -637,7 +730,29 @@
       const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
 
       if (monthModalTitle) monthModalTitle.textContent = `${CONFIG.MONTH_NAMES[monthIdx]} ${year}`;
-      if (monthModalSubtitle) monthModalSubtitle.textContent = `${daysInMonth} днів`;
+      if (monthModalSubtitle) {
+        monthModalSubtitle.textContent = State.activeFilter === "all"
+          ? `${daysInMonth} днів • Загальний графік`
+          : `${daysInMonth} днів • Фільтр: Зміна ${State.activeFilter}`;
+      }
+
+      if (monthModalStatsBar) {
+        monthModalStatsBar.style.display = "flex";
+        if (State.activeFilter !== "all") {
+          const stats = ShiftEngine.calculateMonthStats(State.activeFilter, year, monthIdx);
+          monthModalStatsBar.innerHTML = `
+            <span>Зміна <b>${State.activeFilter}</b>: роб. днів <b>${stats.workDays}</b> (<b>1</b>:${stats.shift1} • <b>2</b>:${stats.shift2} • <b>3</b>:${stats.shift3})</span>
+            <span>Вихідних: <b>${stats.offDays}</b></span>
+          `;
+        } else {
+          monthModalStatsBar.innerHTML = `
+            <span><b>1</b> — Нічна</span>
+            <span><b>2</b> — Ранкова</span>
+            <span><b>3</b> — Вечірня</span>
+            <span>Порожньо — Вихідний</span>
+          `;
+        }
+      }
 
       monthModalTableContainer.innerHTML = "";
       const notes = StorageService.getStoredNotes();
@@ -682,20 +797,37 @@
       this.renderCurrentMonth();
     },
 
+    goToToday() {
+      const now = new Date();
+      State.today = now;
+      const targetYear = now.getFullYear();
+      const targetMonth = now.getMonth();
+
+      if (State.currentYear !== targetYear) {
+        State.currentYear = targetYear;
+        const yearInput = document.getElementById("yearInput");
+        if (yearInput) yearInput.value = State.currentYear;
+        CalendarRenderer.render();
+      }
+
+      if (State.isMonthModalOpen) {
+        State.currentModalMonthIdx = targetMonth;
+        this.renderCurrentMonth();
+        this.scrollToToday();
+      } else {
+        this.open(targetYear, targetMonth);
+        this.scrollToToday();
+      }
+    },
+
     scrollToToday() {
       setTimeout(() => {
         const modalContainer = document.getElementById("monthModalTableContainer");
         const todayCell = modalContainer ? modalContainer.querySelector(".cell-today") : document.querySelector(".cell-today");
         if (todayCell) {
-          todayCell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-          todayCell.classList.remove("today-highlight-pulse");
-          void todayCell.offsetWidth; // force reflow to restart animation
-          todayCell.classList.add("today-highlight-pulse");
-          todayCell.addEventListener("animationend", () => {
-            todayCell.classList.remove("today-highlight-pulse");
-          }, { once: true });
+          todayCell.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
         }
-      }, 350);
+      }, 300);
     }
   };
 
@@ -706,6 +838,7 @@
       const modalDateTitle = document.getElementById("modalDateTitle");
       const noteStatusSelect = document.getElementById("noteStatusSelect");
       const noteTextInput = document.getElementById("noteTextInput");
+      const btnDeleteNote = document.getElementById("btnDeleteNote");
       const noteModal = document.getElementById("noteModal");
 
       const shiftTypeName = Utils.getShiftName(data.shift);
@@ -717,9 +850,11 @@
       if (data.note) {
         if (noteStatusSelect) noteStatusSelect.value = data.note.statusTag || "normal";
         if (noteTextInput) noteTextInput.value = data.note.text || "";
+        if (btnDeleteNote) btnDeleteNote.style.display = "inline-flex";
       } else {
         if (noteStatusSelect) noteStatusSelect.value = "normal";
         if (noteTextInput) noteTextInput.value = "";
+        if (btnDeleteNote) btnDeleteNote.style.display = "none";
       }
 
       if (noteModal) {
@@ -816,20 +951,42 @@
         const parts = key.split("_");
         const dateStr = parts[0];
         const shiftGroup = parts[1];
+        const statusDisplay = (note.statusTag && note.statusTag !== "normal") ? note.statusTag : "Зміна";
 
-        const fullText = `${dateStr} ${shiftGroup} ${note.statusTag || ''} ${note.text || ''}`.toLowerCase();
+        const fullText = `${dateStr} ${shiftGroup} ${statusDisplay} ${note.text || ''}`.toLowerCase();
         if (query && !fullText.includes(query)) return;
 
         count++;
         const item = document.createElement("div");
         item.className = "note-item";
+        item.setAttribute("role", "button");
+        item.setAttribute("tabindex", "0");
+        item.title = "Натисніть, щоб редагувати нотатку";
         item.innerHTML = `
           <div>
-            <div class="note-meta">📅 ${dateStr} | Зміна ${shiftGroup} ${note.statusTag ? `[${note.statusTag}]` : ''}</div>
+            <div class="note-meta">📅 ${Utils.escapeHtml(dateStr)} | Зміна ${Utils.escapeHtml(shiftGroup)} [${Utils.escapeHtml(statusDisplay)}]</div>
             <div class="note-text">${Utils.escapeHtml(note.text || 'Без тексту')}</div>
           </div>
-          <button class="btn-delete-note" title="Видалити" aria-label="Видалити">🗑️</button>
+          <button type="button" class="btn-delete-note" title="Видалити" aria-label="Видалити">🗑️</button>
         `;
+
+        item.addEventListener("click", () => {
+          const dateParts = dateStr.split("-").map(Number);
+          const y = dateParts[0];
+          const mIdx = (dateParts[1] || 1) - 1;
+          const d = dateParts[2] || 1;
+          const shiftVal = ShiftEngine.calculateShift(shiftGroup, y, mIdx, d);
+          this.close();
+          NoteModalController.open({
+            dateStr,
+            shiftGroup,
+            year: y,
+            monthIdx: mIdx,
+            day: d,
+            shift: shiftVal,
+            note
+          });
+        });
 
         item.querySelector(".btn-delete-note").addEventListener("click", (e) => {
           e.stopPropagation();
@@ -960,12 +1117,10 @@
       if (!starRating) return;
       const stars = starRating.querySelectorAll("span");
       stars.forEach(s => {
-        const val = parseInt(s.dataset.star);
-        if (val <= rating) {
-          s.classList.add("active");
-        } else {
-          s.classList.remove("active");
-        }
+        const val = parseInt(s.dataset.star, 10);
+        const isActive = val <= rating;
+        s.classList.toggle("active", isActive);
+        s.setAttribute("aria-checked", val === rating ? "true" : "false");
       });
     },
 
@@ -997,7 +1152,7 @@
 ⚡ <b>Новий відгук з додатку Графік змін!</b>
 
 <b>Оцінка:</b> ${stars} (${feedbackData.rating}/5)
-<b>Контакт:</b> ${feedbackData.contact || 'Не вказано'}
+<b>Контакт:</b> ${Utils.escapeHtml(feedbackData.contact || 'Не вказано')}
 <b>Дата:</b> ${new Date().toLocaleString('uk-UA')}
 
 <b>Текст відгуку:</b>
@@ -1009,49 +1164,6 @@ ${Utils.escapeHtml(feedbackData.text)}
     }
   };
 
-  // --- 15.5. Statistics Drawer Controller ---
-  const StatsController = {
-    open() {
-      const stats = StorageService.trackUsage();
-      const notes = StorageService.getStoredNotes();
-      const totalNotes = Object.keys(notes).length;
-
-      const content = document.getElementById("statsModalContent");
-      if (content) {
-        content.innerHTML = `
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
-            <div style="background: var(--bg-secondary); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid var(--border-color);">
-              <div style="font-size: 1.8rem; font-weight: bold; color: var(--color-primary);">${stats.visitCount || 1}</div>
-              <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">Кількість візитів</div>
-            </div>
-            <div style="background: var(--bg-secondary); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid var(--border-color);">
-              <div style="font-size: 1.8rem; font-weight: bold; color: var(--color-warning);">${totalNotes}</div>
-              <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">Збережено нотаток</div>
-            </div>
-          </div>
-          <div style="margin-top: 16px; padding: 14px; background: var(--bg-secondary); border-radius: 12px; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6;">
-            <div>📅 <b>Перший візит:</b> ${new Date(stats.firstVisit || Date.now()).toLocaleDateString('uk-UA')}</div>
-            <div>⏰ <b>Останній візит:</b> ${new Date(stats.lastVisit || Date.now()).toLocaleString('uk-UA')}</div>
-            <div>⚙️ <b>Алгоритм:</b> 15-денний безперервний цикл ПАЕС ШУП</div>
-            <div>⚡ <b>Підтримка:</b> Мультирічний генератор (2026-2030+)</div>
-          </div>
-        `;
-      }
-      const modal = document.getElementById("statsModal");
-      if (modal) {
-        modal.classList.add("active");
-        Utils.updateModalScrollLock();
-      }
-    },
-    close() {
-      const modal = document.getElementById("statsModal");
-      if (modal) {
-        modal.classList.remove("active");
-        Utils.updateModalScrollLock();
-      }
-    }
-  };
-
   // --- 16. Install App Controller ---
   const InstallAppController = {
     init() {
@@ -1059,16 +1171,6 @@ ${Utils.escapeHtml(feedbackData.text)}
       const appHeaderTitle = document.getElementById("appHeaderTitle");
       
       if (appHeaderTitle) {
-        setTimeout(() => {
-          if (window.matchMedia(CONFIG.MOBILE_BREAKPOINT_QUERY).matches) {
-            appHeaderTitle.classList.add("highlight-title");
-            
-            setTimeout(() => {
-              appHeaderTitle.classList.remove("highlight-title");
-            }, 4500); // Animation runs for 3 iterations * 1.5s = 4.5s
-          }
-        }, 5000);
-
         appHeaderTitle.addEventListener("click", () => {
           if (installAppModal) {
             installAppModal.classList.add("active");
@@ -1085,20 +1187,6 @@ ${Utils.escapeHtml(feedbackData.text)}
           btn.addEventListener("click", () => this.close());
         }
       });
-
-      if (installAppModal) {
-        let ts_install = 0;
-        const handle_install = installAppModal.querySelector(".drawer-handle");
-        if (handle_install) {
-          handle_install.addEventListener("touchstart", (e) => { ts_install = e.touches[0].clientY; }, { passive: true });
-          handle_install.addEventListener("touchend", (e) => {
-            if (e.changedTouches[0].clientY - ts_install > 50) this.close();
-          });
-        }
-        installAppModal.addEventListener("click", (e) => {
-          if (e.target === installAppModal) this.close();
-        });
-      }
     },
     
     close() {
@@ -1115,9 +1203,9 @@ ${Utils.escapeHtml(feedbackData.text)}
     init() {
       StorageService.trackUsage();
       ThemeService.init();
+      FilterController.syncUI();
       this.setupEventListeners();
       CalendarRenderer.render();
-      CalendarRenderer.scrollToToday();
       TelegramService.flushOutbox();
 
       // Під час завантаження: відкриваємо модальне вікно з поточним місяцем та скролимо до поточного числа
@@ -1125,6 +1213,8 @@ ${Utils.escapeHtml(feedbackData.text)}
       if (State.currentYear === now.getFullYear()) {
         MonthModalController.open(State.currentYear, now.getMonth());
         MonthModalController.scrollToToday();
+      } else {
+        CalendarRenderer.scrollToToday();
       }
 
       InstallAppController.init();
@@ -1134,58 +1224,69 @@ ${Utils.escapeHtml(feedbackData.text)}
       const btnPrevYear = document.getElementById("btnPrevYear");
       const btnNextYear = document.getElementById("btnNextYear");
       const yearInput = document.getElementById("yearInput");
+      const btnTodayHeader = document.getElementById("btnTodayHeader");
+      const btnTodayModal = document.getElementById("btnTodayModal");
       const btnThemeToggle = document.getElementById("btnThemeToggle");
-      const btnPrint = document.getElementById("btnPrint");
       const shiftFilterButtons = document.querySelectorAll(".btn-filter");
+      const filterAccordion = document.getElementById("filterAccordion");
 
       if (btnPrevYear) {
         btnPrevYear.addEventListener("click", () => {
-          State.currentYear--;
-          if (yearInput) yearInput.value = State.currentYear;
-          CalendarRenderer.render();
-          if (State.isMonthModalOpen) MonthModalController.renderCurrentMonth();
-        });
-      }
-
-      if (btnNextYear) {
-        btnNextYear.addEventListener("click", () => {
-          State.currentYear++;
-          if (yearInput) yearInput.value = State.currentYear;
-          CalendarRenderer.render();
-          if (State.isMonthModalOpen) MonthModalController.renderCurrentMonth();
-        });
-      }
-
-      if (yearInput) {
-        yearInput.addEventListener("change", () => {
-          const val = parseInt(yearInput.value);
-          if (!isNaN(val) && val >= 1900 && val <= 2100) {
-            State.currentYear = val;
+          if (State.currentYear > 1900) {
+            State.currentYear--;
+            if (yearInput) yearInput.value = State.currentYear;
             CalendarRenderer.render();
             if (State.isMonthModalOpen) MonthModalController.renderCurrentMonth();
           }
         });
       }
 
-      shiftFilterButtons.forEach(btn => {
-        btn.addEventListener("click", () => {
-          if (btn.classList.contains("active")) {
-            btn.classList.remove("active");
-            State.activeFilter = "all";
+      if (btnNextYear) {
+        btnNextYear.addEventListener("click", () => {
+          if (State.currentYear < 2100) {
+            State.currentYear++;
+            if (yearInput) yearInput.value = State.currentYear;
+            CalendarRenderer.render();
+            if (State.isMonthModalOpen) MonthModalController.renderCurrentMonth();
+          }
+        });
+      }
+
+      if (yearInput) {
+        yearInput.addEventListener("change", () => {
+          const val = parseInt(yearInput.value, 10);
+          if (!isNaN(val) && val >= 1900 && val <= 2100) {
+            State.currentYear = val;
+            CalendarRenderer.render();
+            if (State.isMonthModalOpen) MonthModalController.renderCurrentMonth();
           } else {
-            shiftFilterButtons.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            State.activeFilter = btn.dataset.filter;
+            yearInput.value = State.currentYear;
           }
-          CalendarRenderer.render();
-          if (State.isMonthModalOpen) {
-            MonthModalController.renderCurrentMonth();
-          }
+        });
+      }
+
+      if (btnTodayHeader) {
+        btnTodayHeader.addEventListener("click", () => MonthModalController.goToToday());
+      }
+      if (btnTodayModal) {
+        btnTodayModal.addEventListener("click", () => MonthModalController.goToToday());
+      }
+
+      shiftFilterButtons.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          FilterController.setFilter(btn.dataset.filter, btn);
         });
       });
 
+      // Close filter accordion when clicking outside
+      document.addEventListener("click", (e) => {
+        if (filterAccordion && filterAccordion.hasAttribute("open") && !filterAccordion.contains(e.target)) {
+          filterAccordion.removeAttribute("open");
+        }
+      });
+
       if (btnThemeToggle) btnThemeToggle.addEventListener("click", () => ThemeService.toggle());
-      if (btnPrint) btnPrint.addEventListener("click", () => window.print());
 
       // Note Modal Listeners
       const btnCloseNoteModal = document.getElementById("btnCloseNoteModal");
@@ -1215,8 +1316,6 @@ ${Utils.escapeHtml(feedbackData.text)}
       if (btnCloseNotesListModal) btnCloseNotesListModal.addEventListener("click", () => NotesListController.close());
       if (notesSearchInput) notesSearchInput.addEventListener("input", () => NotesListController.renderList());
 
-
-
       // QR Code Listeners
       const btnCloseQrModal = document.getElementById("btnCloseQrModal");
       const btnCopyUrl = document.getElementById("btnCopyUrl");
@@ -1242,20 +1341,20 @@ ${Utils.escapeHtml(feedbackData.text)}
         const stars = starRating.querySelectorAll("span");
         stars.forEach(star => {
           star.addEventListener("click", () => {
-            State.selectedRating = parseInt(star.dataset.star);
+            State.selectedRating = parseInt(star.dataset.star, 10);
             FeedbackController.updateStarUI(State.selectedRating);
           });
         });
       }
 
-      // Backdrop Click Closing for all modals
+      // Backdrop Click & Mobile Drawer Handle Swipe-to-Close for all modals
       const modalMap = [
         { id: "noteModal", close: () => NoteModalController.close() },
         { id: "notesListModal", close: () => NotesListController.close() },
-        { id: "statsModal", close: () => StatsController.close() },
         { id: "qrModal", close: () => QrController.close() },
         { id: "feedbackModal", close: () => FeedbackController.close() },
-        { id: "monthModal", close: () => MonthModalController.close() }
+        { id: "monthModal", close: () => MonthModalController.close() },
+        { id: "installAppModal", close: () => InstallAppController.close() }
       ];
 
       modalMap.forEach(item => {
@@ -1266,46 +1365,34 @@ ${Utils.escapeHtml(feedbackData.text)}
               item.close();
             }
           });
+
+          const handle = modalEl.querySelector(".drawer-handle");
+          if (handle) {
+            let touchStartY = 0;
+            handle.addEventListener("touchstart", (e) => {
+              touchStartY = e.touches[0].clientY;
+            }, { passive: true });
+            handle.addEventListener("touchend", (e) => {
+              if (e.changedTouches[0].clientY - touchStartY > 45) {
+                item.close();
+              }
+            }, { passive: true });
+          }
         }
       });
 
       // Global Escape Key Listener for Closing Modals in Z-Index Priority Order
       window.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
-          const noteModal = document.getElementById("noteModal");
-          if (noteModal && noteModal.classList.contains("active")) {
-            NoteModalController.close();
-            return;
+          for (const item of modalMap) {
+            const modalEl = document.getElementById(item.id);
+            if (modalEl && modalEl.classList.contains("active")) {
+              item.close();
+              return;
+            }
           }
-          const notesListModal = document.getElementById("notesListModal");
-          if (notesListModal && notesListModal.classList.contains("active")) {
-            NotesListController.close();
-            return;
-          }
-          const statsModal = document.getElementById("statsModal");
-          if (statsModal && statsModal.classList.contains("active")) {
-            StatsController.close();
-            return;
-          }
-          const qrModal = document.getElementById("qrModal");
-          if (qrModal && qrModal.classList.contains("active")) {
-            QrController.close();
-            return;
-          }
-          const feedbackModal = document.getElementById("feedbackModal");
-          if (feedbackModal && feedbackModal.classList.contains("active")) {
-            FeedbackController.close();
-            return;
-          }
-          const monthModal = document.getElementById("monthModal");
-          if (monthModal && monthModal.classList.contains("active")) {
-            MonthModalController.close();
-            return;
-          }
-          const installAppModal = document.getElementById("installAppModal");
-          if (installAppModal && installAppModal.classList.contains("active")) {
-            InstallAppController.close();
-            return;
+          if (filterAccordion && filterAccordion.hasAttribute("open")) {
+            filterAccordion.removeAttribute("open");
           }
         }
       });

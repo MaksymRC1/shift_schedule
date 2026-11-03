@@ -1,10 +1,11 @@
-const CACHE_NAME = 'shift-schedule-cache-v18';
+const CACHE_NAME = 'shift-schedule-cache-v21';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './style.css',
   './app.js',
   './manifest.json',
+  './favicon.png',
   './icons/icon.svg'
 ];
 

@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   try {
     const { isFirstVisit, visitCount } = req.body || {};
 
-    const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv' }).format(new Date()); // YYYY-MM-DD in Kyiv time
     
     const pipeline = redis.pipeline();
     

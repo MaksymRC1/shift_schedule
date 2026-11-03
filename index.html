@@ -70,7 +70,7 @@
     <header class="app-header">
       <div class="header-container">
         <div class="title-group">
-          <h1 id="appHeaderTitle" style="cursor: pointer; transition: all 0.3s ease;"><span class="material-symbols-outlined" style="vertical-align: text-bottom;">bolt</span> Графік змін<span style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary); margin-left: 8px; vertical-align: middle;">v1.1</span></h1>
+          <h1 id="appHeaderTitle" style="cursor: pointer; transition: all 0.3s ease;"><span class="material-symbols-outlined" style="vertical-align: text-bottom;">bolt</span> Графік змін<span style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary); margin-left: 8px; vertical-align: middle;">v1.2</span></h1>
           <button id="btnThemeToggle" class="theme-toggle-modern" aria-label="Перемикач теми" title="Змінити тему" role="switch" aria-checked="false">
             <span class="toggle-track">
               <span class="toggle-icon sun"><span class="material-symbols-outlined" style="font-size: 16px;">light_mode</span></span>
@@ -88,15 +88,32 @@
             <button id="btnNextYear" class="btn-nav" title="Наступний рік" aria-label="Наступний рік">▶</button>
           </div>
 
-          <details class="legend-accordion">
-            <summary aria-label="Фільтр змін" title="Фільтр змін" style="justify-content: center;"><span class="material-symbols-outlined" style="font-size: 20px;">filter_list</span></summary>
+          <button id="btnTodayHeader" class="btn-action btn-today" title="Перейти до сьогодні" aria-label="Сьогодні">
+            <span class="material-symbols-outlined" style="font-size: 18px;">today</span>
+            <span class="btn-today-label">Сьогодні</span>
+          </button>
+
+          <details class="legend-accordion" id="filterAccordion">
+            <summary aria-label="Фільтр змін" title="Фільтр змін" style="justify-content: center; gap: 6px;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">filter_list</span>
+              <span id="activeFilterBadge" class="filter-badge-text">Всі</span>
+            </summary>
             <section class="toolbar-section">
+              <div class="filter-section-header">
+                <span>Оберіть зміну:</span>
+              </div>
               <div class="shift-filters" role="group" aria-label="Фільтр змін">
-                <button class="btn-filter" data-filter="А">А</button>
-                <button class="btn-filter" data-filter="Б">Б</button>
-                <button class="btn-filter" data-filter="В">В</button>
-                <button class="btn-filter" data-filter="Г">Г</button>
-                <button class="btn-filter" data-filter="Д">Д</button>
+                <button type="button" class="btn-filter active" data-filter="all" title="Всі зміни (загальний графік)">Всі</button>
+                <button type="button" class="btn-filter" data-filter="А">А</button>
+                <button type="button" class="btn-filter" data-filter="Б">Б</button>
+                <button type="button" class="btn-filter" data-filter="В">В</button>
+                <button type="button" class="btn-filter" data-filter="Г">Г</button>
+                <button type="button" class="btn-filter" data-filter="Д">Д</button>
+              </div>
+              <div class="shift-legend-mini" aria-label="Легенда змін">
+                <span class="legend-pill shift-1-pill"><b>1</b> Нічна</span>
+                <span class="legend-pill shift-2-pill"><b>2</b> Ранкова</span>
+                <span class="legend-pill shift-3-pill"><b>3</b> Вечірня</span>
               </div>
             </section>
           </details>
@@ -128,11 +145,21 @@
           </div>
           <div class="month-modal-controls">
             <button id="btnPrevMonthModal" class="btn-action btn-month-nav" title="Попередній місяць" aria-label="Попередній місяць"><span class="material-symbols-outlined">chevron_left</span></button>
+            <button id="btnTodayModal" class="btn-action btn-month-nav" title="Сьогодні" aria-label="Сьогодні"><span class="material-symbols-outlined" style="font-size: 19px;">today</span></button>
             <button id="btnNextMonthModal" class="btn-action btn-month-nav" title="Наступний місяць" aria-label="Наступний місяць"><span class="material-symbols-outlined">chevron_right</span></button>
           </div>
           <button id="btnCloseMonthModal" class="btn-close" aria-label="Закрити">&times;</button>
         </div>
         <div class="modal-body month-modal-body">
+          <div class="modal-shift-filters" role="group" aria-label="Фільтр змін у модальному вікні">
+            <button type="button" class="btn-filter active" data-filter="all" title="Всі зміни (загальний графік)">Всі</button>
+            <button type="button" class="btn-filter" data-filter="А">А</button>
+            <button type="button" class="btn-filter" data-filter="Б">Б</button>
+            <button type="button" class="btn-filter" data-filter="В">В</button>
+            <button type="button" class="btn-filter" data-filter="Г">Г</button>
+            <button type="button" class="btn-filter" data-filter="Д">Д</button>
+          </div>
+          <div id="monthModalStatsBar" class="month-stats-bar" style="display: none;"></div>
           <div id="monthModalTableContainer" class="table-wrapper"></div>
         </div>
         <div class="modal-footer month-modal-footer">
